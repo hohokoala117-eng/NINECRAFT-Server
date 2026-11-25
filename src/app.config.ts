@@ -1,71 +1,49 @@
-import {
-  defineServer,
-  defineRoom,
-  monitor,
-  playground,
-  createRouter,
-  createEndpoint,
-  LobbyRoom,
-} from "colyseus";
-
-/**
- * Import your Room files
- */
+import crypto from "node:crypto";
+import { defineServer, defineRoom, monitor, playground, LobbyRoom } from "colyseus";
 import { MyRoom } from "./rooms/MyRoom.js";
 
-const server = defineServer({
+const SECRET = process.env.NINECRAFT_ADMIN_PASSWORD || "fallback-secret";
 
-  /**
-   * Define your room handlers:
-   */
+export function verifyAdminToken(token: unknown): boolean {
+  if (typeof token !== "string" || !token.includes(".")) return false;
+  const [exp, sig] = token.split(".");
+  if (Number(exp) < Date.now()) return false;
+  const expected = crypto.createHmac("sha256", SECRET).update(exp).digest("hex");
+  return sig === expected;
+}
+
+const server = defineServer({
   rooms: {
     my_room: defineRoom(MyRoom).enableRealtimeListing(),
     lobby: defineRoom(LobbyRoom),
   },
-
-  /**
-   * Experimental: Define API routes. Built-in integration with the "playground" and SDK.
-   *
-   * Usage from SDK:
-   *   client.http.get("/api/hello").then((response) => {})
-   *
-   */
-  routes: createRouter({
-    api_hello: createEndpoint("/api/hello", { method: "GET" }, async (ctx) => {
-      return { message: "Hello World" };
-    }),
-  }),
-
-  /**
-   * Bind your custom express routes here:
-   * Read more: https://expressjs.com/en/starter/basic-routing.html
-   */
   express: (app) => {
-
-    app.get("/hi", (req, res) => {
-      res.send("It's time to kick ass and chew bubblegum!");
+    app.use((req, res, next) => {
+      res.header("Access-Control-Allow-Origin", "*");
+      res.header("Access-Control-Allow-Headers", "Content-Type");
+      if (req.method === "OPTIONS") return res.sendStatus(200);
+      next();
     });
 
-    /**
-     * Use @colyseus/monitor
-     * If you expose it in production, make sure to protect it with a password:
-     * https://docs.colyseus.io/tools/monitoring#password-protection
-     */
+    app.post("/api/admin-login", (req, res) => {
+      const { adminName, password } = req.body || {};
+      const validName = process.env.NINECRAFT_ADMIN_NAME || "市木廉";
+      const validPass = process.env.NINECRAFT_ADMIN_PASSWORD;
+
+      if (!validPass || adminName !== validName || password !== validPass) {
+        return res.status(401).json({ ok: false, error: "認証に失敗しました" });
+      }
+      const exp = String(Date.now() + 1000 * 60 * 60 * 24 * 7);
+      const sig = crypto.createHmac("sha256", SECRET).update(exp).digest("hex");
+      res.json({ ok: true, adminName: validName, token: `${exp}.${sig}` });
+    });
+
     if (process.env.NODE_ENV !== "production") {
       app.use("/monitor", monitor());
-    }
-
-    /**
-     * Use @colyseus/playground
-     * (It is not recommended to expose this route in a production environment)
-     */
-    if (process.env.NODE_ENV !== "production") {
       app.use("/playground", playground());
     }
-  }
+  },
 });
 
 export default server;
-
-/** Named export read by the `colyseus/vite` plugin's `serverEntry`. */
 export { server };
