@@ -1,49 +1,79 @@
-import crypto from "node:crypto";
-import { defineServer, defineRoom, monitor, playground, LobbyRoom } from "colyseus";
-import { MyRoom } from "./rooms/MyRoom.js";
+import { Room, Client, CloseCode } from "colyseus";
+import { MyRoomState, Player } from "./schema/MyRoomState.js";
+import { verifyAdminToken } from "../app.config.js";
 
-const SECRET = process.env.NINECRAFT_ADMIN_PASSWORD || "fallback-secret";
-
-export function verifyAdminToken(token: unknown): boolean {
-  if (typeof token !== "string" || !token.includes(".")) return false;
-  const [exp, sig] = token.split(".");
-  if (Number(exp) < Date.now()) return false;
-  const expected = crypto.createHmac("sha256", SECRET).update(exp).digest("hex");
-  return sig === expected;
+function generateInviteCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
 }
 
-const server = defineServer({
-  rooms: {
-    my_room: defineRoom(MyRoom).enableRealtimeListing(),
-    lobby: defineRoom(LobbyRoom),
-  },
-  express: (app) => {
-    app.use((req, res, next) => {
-      res.header("Access-Control-Allow-Origin", "*");
-      res.header("Access-Control-Allow-Headers", "Content-Type");
-      if (req.method === "OPTIONS") return res.sendStatus(200);
-      next();
-    });
+export class MyRoom extends Room<{ state: MyRoomState }> {
+  maxClients = 16;
+  state = new MyRoomState();
 
-    app.post("/api/admin-login", (req, res) => {
-      const { adminName, password } = req.body || {};
-      const validName = process.env.NINECRAFT_ADMIN_NAME || "市木廉";
-      const validPass = process.env.NINECRAFT_ADMIN_PASSWORD;
+  messages = {
+    move: (client: Client, data: any) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !data) return;
+      if (typeof data.x === "number") player.x = data.x;
+      if (typeof data.y === "number") player.y = data.y;
+      if (typeof data.z === "number") player.z = data.z;
+      if (typeof data.yaw === "number") player.yaw = data.yaw;
+      if (typeof data.pitch === "number") player.pitch = data.pitch;
+      if (typeof data.heldItem === "string") player.heldItem = data.heldItem;
+      if (typeof data.skin === "string" && data.skin) player.skin = data.skin;
+      if (typeof data.crouching === "boolean") player.crouching = data.crouching;
+      if (typeof data.flying === "boolean") player.flying = data.flying;
+    },
 
-      if (!validPass || adminName !== validName || password !== validPass) {
-        return res.status(401).json({ ok: false, error: "認証に失敗しました" });
+    block_update: (client: Client, data: any) => {
+      if (!data || typeof data.x !== "number" || typeof data.y !== "number" || typeof data.z !== "number") return;
+      const key = `${Math.floor(data.x)},${Math.floor(data.y)},${Math.floor(data.z)}`;
+      const blockId = typeof data.blockId === "string" ? data.blockId : "air";
+      this.state.blocks.set(key, blockId);
+      if (blockId === "air" || blockId === "") {
+        this.state.blockStates.delete(key);
+      } else if (data.state !== undefined) {
+        this.state.blockStates.set(key, typeof data.state === "string" ? data.state : JSON.stringify(data.state));
       }
-      const exp = String(Date.now() + 1000 * 60 * 60 * 24 * 7);
-      const sig = crypto.createHmac("sha256", SECRET).update(exp).digest("hex");
-      res.json({ ok: true, adminName: validName, token: `${exp}.${sig}` });
-    });
+    },
 
-    if (process.env.NODE_ENV !== "production") {
-      app.use("/monitor", monitor());
-      app.use("/playground", playground());
-    }
-  },
-});
+    block_state_update: (client: Client, data: any) => {
+      if (!data || typeof data.x !== "number" || typeof data.y !== "number" || typeof data.z !== "number") return;
+      const key = `${Math.floor(data.x)},${Math.floor(data.y)},${Math.floor(data.z)}`;
+      if (!data.state) { this.state.blockStates.delete(key); return; }
+      const prev = JSON.parse(this.state.blockStates.get(key) || "{}");
+      this.state.blockStates.set(key, JSON.stringify(typeof data.state === "object" ? { ...prev, ...data.state } : data.state));
+    },
+    // メッセージ受信やワールド設定、モブスポーン処理
+    chat: (client: Client, data: any) => { /* ... (チャット配信処理) ... */ },
+    world_env: (client: Client, data: any) => { /* ... (ワールド環境設定) ... */ },
+    spawn_mob: (client: Client, data: any) => { /* ... (モブスポーン処理) ... */ },
+  };
 
-export default server;
-export { server };
+  onCreate(options: any) {
+    // ルーム・ワールド初期化設定
+    const code = options?.inviteCode || generateInviteCode();
+    this.roomId = code;
+    this.state.inviteCode = code;
+    this.state.worldName = options?.worldName || "NINECRAFT World";
+    // （他シード値やゲームモードなどの初期化）
+  }
+
+  onJoin(client: Client, options: any) {
+    // プレイヤー参加時の初期化処理
+  }
+
+  onLeave(client: Client) {
+    this.state.players.delete(client.sessionId);
+    if (this.state.hostId === client.sessionId) this.state.hostId = "";
+  }
+
+  onDrop(client: Client) {
+    this.allowReconnection(client, 30).catch(() => {});
+  }
+}
