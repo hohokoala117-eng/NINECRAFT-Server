@@ -25,5 +25,6 @@ export const MyRoomState = schema({
   weather: t.string(),
   players: t.map(Player),
   blocks: t.map("string"),
+  blockStates: t.map("string"),
 });
 export type MyRoomState = SchemaType<typeof MyRoomState>;
