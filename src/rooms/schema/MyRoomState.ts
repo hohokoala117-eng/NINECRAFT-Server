@@ -3,6 +3,7 @@ import { schema, t, type SchemaType } from "@colyseus/schema";
 export const Player = schema({
   id: t.string(),
   name: t.string(),
+  skin: t.string(),
   x: t.number(),
   y: t.number(),
   z: t.number(),
