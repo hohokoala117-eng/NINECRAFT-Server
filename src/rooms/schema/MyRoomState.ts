@@ -4,6 +4,8 @@ export const Player = schema({
   id: t.string(),
   name: t.string(),
   skin: t.string(),
+  isHost: t.boolean(),
+  isAdmin: t.boolean(),
   x: t.number(),
   y: t.number(),
   z: t.number(),
@@ -17,6 +19,7 @@ export type Player = SchemaType<typeof Player>;
 
 export const MyRoomState = schema({
   inviteCode: t.string(),
+  hostId: t.string(),
   worldName: t.string(),
   seed: t.string(),
   gameMode: t.string(),
@@ -24,6 +27,9 @@ export const MyRoomState = schema({
   worldType: t.string(),
   worldTime: t.number(),
   weather: t.string(),
+  alwaysDay: t.boolean(),
+  keepInventory: t.boolean(),
+  allowCheats: t.boolean(),
   players: t.map(Player),
   blocks: t.map("string"),
   blockStates: t.map("string"),
